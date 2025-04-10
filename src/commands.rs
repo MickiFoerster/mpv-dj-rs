@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::state_machine::MpvInstance;
 
-fn full_screen(socket_path: &str, screen: usize) -> Result<(), String> {
+fn _full_screen(socket_path: &str, screen: usize) -> Result<(), String> {
     let msg = json!({ "command": ["set_property", "fullscreen", false] });
     send_msg(&socket_path, msg)?;
 
@@ -83,6 +83,7 @@ pub fn start_video(
     children: &Vec<MpvInstance>,
     instance_id: usize,
     path: &Path,
+    volume: u8,
 ) -> Result<(), String> {
     let socket_path: String = children
         .get(instance_id)
@@ -99,8 +100,8 @@ pub fn start_video(
     eprintln!("Send to {socket_path}: {msg}");
     let _result = send_msg(&socket_path, msg)?;
 
-    set_volume(&socket_path, 0)?;
-    full_screen(&socket_path, instance_id + 1)?;
+    set_volume(&socket_path, volume)?;
+    //full_screen(&socket_path, instance_id + 1)?;
 
     // Wait until get_duration is successful
     eprintln!("Wait until get_duration is successful");

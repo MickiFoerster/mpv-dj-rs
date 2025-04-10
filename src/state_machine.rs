@@ -34,15 +34,15 @@ pub fn play(media_files: &Vec<MediaFile>) {
         }
     }
 
-    start_video(&children, 0, &path).expect("Failed to start video");
+    start_video(&children, 0, &path, 100).expect("Failed to start video");
 
     let mut from = 0;
     let mut to = 1;
     loop {
-        wait_for_the_end(&children, from).expect("Failed to wait for the end of the video");
+        let _ = wait_for_the_end(&children, from);
 
         let path = get_next_song2(media_files);
-        start_video(&children, to, &path).expect("Failed to start video");
+        start_video(&children, to, &path, 0).expect("Failed to start video");
 
         let socket_path_from: String = children
             .get(from)
@@ -101,10 +101,10 @@ pub fn play(media_files: &Vec<MediaFile>) {
         }
 
         let msg = json!({ "command": ["set_property", "volume", 0] });
-        send_msg(&socket_path_from, msg).expect("Failed to send volume command");
+        let _ = send_msg(&socket_path_from, msg);
 
         let msg = json!({ "command": ["set_property", "volume", 100] });
-        send_msg(&socket_path_to, msg).expect("Failed to send volume command");
+        let _ = send_msg(&socket_path_to, msg);
 
         from = to;
         to = from;
@@ -133,6 +133,15 @@ fn spawn_mpv_with_ipc(i: u32) -> std::io::Result<MpvInstance> {
         .arg(format!("--input-ipc-server={}", socket_path))
         .spawn()
         .expect("Failed to spawn mpv process");
+
+    loop {
+        if std::path::Path::new(&socket_path).exists() {
+            break;
+        } else {
+            eprintln!("Cannot see IPC socket yet, waiting ...");
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
 
     Ok(MpvInstance {
         socket: socket_path,
