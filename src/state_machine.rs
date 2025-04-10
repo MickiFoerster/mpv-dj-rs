@@ -5,56 +5,76 @@ use std::{path::PathBuf, thread, time::Duration};
 use serde_json::json;
 
 use crate::{
-    commands::{get_duration, get_playback_time, send_msg, start_video, wait_for_the_end},
+    commands::{get_duration, get_playback_time, quit, send_msg, start_video, wait_for_the_end},
     load_media_files::MediaFile,
 };
 
-pub struct MpvInstance {
-    pub socket: String,
-    pub process: Child,
-}
-
 pub fn play(media_files: &Vec<MediaFile>) {
+    let mut from = 0;
+    let mut to = 1;
+    let mut children: Vec<Child> = Vec::with_capacity(2);
+
     let path = get_next_song(&media_files);
 
-    let mut children: Vec<MpvInstance> = vec![];
+    let mut socket_path_from = format!("/tmp/mpv{from}.socket");
+    let mut socket_path_to: String;
 
-    for i in 0..2 {
-        match spawn_mpv_with_ipc(i) {
-            Ok(child) => {
-                let ipc_path = &child.socket;
+    let _ = std::fs::remove_file(&socket_path_from);
 
-                println!("mpv launched successfully with IPC socket {ipc_path}.");
+    let mut cmd = Command::new("mpv");
+    let cmd = cmd
+        .arg("--idle")
+        .arg("--no-terminal")
+        .arg("--quiet")
+        .arg("--fs")
+        .arg("--fs-screen=1")
+        .arg(format!("--input-ipc-server={}", socket_path_from));
 
-                children.push(child);
-            }
-            Err(e) => {
-                eprintln!("Failed to start mpv: {}", e);
-            }
+    eprintln!("{cmd:#?}");
+    children.insert(from, cmd.spawn().expect("Failed to spawn mpv process"));
+
+    loop {
+        if std::path::Path::new(&socket_path_from).exists() {
+            break;
+        } else {
+            eprintln!("Cannot see IPC socket yet, waiting ...");
+            thread::sleep(Duration::from_millis(100));
         }
     }
 
-    start_video(&children, 0, &path, 100).expect("Failed to start video");
+    start_video(&socket_path_from, &path, 100).expect("Failed to start video");
 
-    let mut from = 0;
-    let mut to = 1;
     loop {
-        let _ = wait_for_the_end(&children, from);
+        wait_for_the_end(&socket_path_from);
 
-        let path = get_next_song2(media_files);
-        start_video(&children, to, &path, 0).expect("Failed to start video");
+        // Now time to start next video
+        let path = get_next_song(media_files);
 
-        let socket_path_from: String = children
-            .get(from)
-            .expect("Failed to get mpv instance")
-            .socket
-            .clone();
+        socket_path_to = format!("/tmp/mpv{to}.socket");
+        let _ = std::fs::remove_file(&socket_path_to);
 
-        let socket_path_to: String = children
-            .get(to)
-            .expect("Failed to get mpv instance")
-            .socket
-            .clone();
+        let mut cmd = Command::new("mpv");
+        let cmd = cmd
+            .arg("--idle")
+            .arg("--no-terminal")
+            .arg("--quiet")
+            .arg("--fs")
+            .arg(format!("--fs-screen={}", to + 1))
+            .arg(format!("--input-ipc-server={}", socket_path_to));
+
+        eprintln!("{cmd:#?}");
+        children.insert(to, cmd.spawn().expect("Failed to spawn mpv process"));
+
+        loop {
+            if std::path::Path::new(&socket_path_to).exists() {
+                break;
+            } else {
+                eprintln!("Cannot see IPC socket yet, waiting ...");
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        start_video(&socket_path_to, &path, 0).expect("Failed to start video");
 
         eprintln!("Begin fading out of {from} and in of {to} ...");
 
@@ -71,25 +91,26 @@ pub fn play(media_files: &Vec<MediaFile>) {
                             eprintln!("set volume of instance {from}: {volume}");
                             let msg =
                                 json!({ "command": ["set_property", "volume", volume.trunc()] });
-                            send_msg(&socket_path_from, msg)
-                                .expect("Failed to send volume command");
+                            let _ = send_msg(&socket_path_from, msg);
 
-                            if volume < 1. {
+                            if volume < 40. {
                                 break;
                             }
 
                             // set volume of instance 1
-                            let playback_time = get_playback_time(&socket_path_to)
-                                .expect("Failed to get playback time");
-                            let volume = playback_time * 100. / time_difference;
-                            let volume = if volume <= 100. { volume } else { 100. };
+                            if let Some(playback_time) = get_playback_time(&socket_path_to) {
+                                let volume = playback_time * 100. / 10.;
+                                let volume = if volume <= 100. { volume } else { 100. };
 
-                            eprintln!("set volume of instance {to}: {volume}");
-                            let msg =
-                                json!({ "command": ["set_property", "volume", volume.trunc()] });
-                            send_msg(&socket_path_to, msg).expect("Failed to send volume command");
+                                eprintln!("set volume of instance {to}: {volume}");
+                                let msg = json!({ "command": ["set_property", "volume", volume.trunc()] });
+                                send_msg(&socket_path_to, msg)
+                                    .expect("Failed to send volume command");
+                            } else {
+                                break;
+                            }
 
-                            thread::sleep(Duration::from_millis(1000));
+                            thread::sleep(Duration::from_millis(500));
                         } else {
                             break;
                         }
@@ -106,45 +127,37 @@ pub fn play(media_files: &Vec<MediaFile>) {
         let msg = json!({ "command": ["set_property", "volume", 100] });
         let _ = send_msg(&socket_path_to, msg);
 
+        loop {
+            if let Some(playback_time) = get_playback_time(&socket_path_from) {
+                if let Some(duration) = get_duration(&socket_path_from) {
+                    if playback_time < duration {
+                        eprintln!("Wait for old video to finish ...");
+                        thread::sleep(Duration::from_millis(500));
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        let _ = quit(&socket_path_from);
+        match children[from].kill() {
+            Ok(_) => eprintln!("Old process successfully killed."),
+            Err(e) => eprintln!("Old process could not be killed: {e}"),
+        };
+
+        let tmp = from;
         from = to;
-        to = from;
+        to = tmp;
+
+        socket_path_from = format!("/tmp/mpv{from}.socket");
     }
 }
 
 fn get_next_song(media_files: &Vec<MediaFile>) -> PathBuf {
-    media_files.get(10).expect("non-empty vector").path.clone()
-}
-fn get_next_song2(media_files: &Vec<MediaFile>) -> PathBuf {
-    media_files.get(20).expect("non-empty vector").path.clone()
-}
-
-fn spawn_mpv_with_ipc(i: u32) -> std::io::Result<MpvInstance> {
-    let socket_path = format!("/tmp/mpv{i}.socket");
-
-    // Clean up any potential existing socket first
-    let _ = std::fs::remove_file(&socket_path);
-
-    let child = Command::new("mpv")
-        .arg("--idle")
-        .arg("--no-terminal")
-        .arg("--quiet")
-        .arg("--fs")
-        .arg(format!("--fs-screen={}", i + 1))
-        .arg(format!("--input-ipc-server={}", socket_path))
-        .spawn()
-        .expect("Failed to spawn mpv process");
-
-    loop {
-        if std::path::Path::new(&socket_path).exists() {
-            break;
-        } else {
-            eprintln!("Cannot see IPC socket yet, waiting ...");
-            thread::sleep(Duration::from_millis(100));
-        }
-    }
-
-    Ok(MpvInstance {
-        socket: socket_path,
-        process: child,
-    })
+    media_files.get(0).expect("non-empty vector").path.clone()
 }

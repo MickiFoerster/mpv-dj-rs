@@ -6,8 +6,6 @@ use std::{thread, time::Duration};
 
 use serde_json::json;
 
-use crate::state_machine::MpvInstance;
-
 fn _full_screen(socket_path: &str, screen: usize) -> Result<(), String> {
     let msg = json!({ "command": ["set_property", "fullscreen", false] });
     send_msg(&socket_path, msg)?;
@@ -21,6 +19,13 @@ fn _full_screen(socket_path: &str, screen: usize) -> Result<(), String> {
     Ok(())
 }
 
+pub fn quit(socket_path: &str) -> Result<(), String> {
+    let msg = json!({ "command": ["quit"] });
+    let result = send_msg(&socket_path, msg)?;
+    eprintln!("{result:#}");
+
+    Ok(())
+}
 fn set_volume(socket_path: &str, volume: u8) -> Result<(), String> {
     let msg = json!({ "command": ["set_property", "volume", volume] });
     let _result = send_msg(&socket_path, msg)?;
@@ -47,20 +52,14 @@ pub fn get_duration(socket_path: &str) -> Option<f64> {
     response.get("data").map(|v| v.as_f64())?
 }
 
-pub fn wait_for_the_end(children: &Vec<MpvInstance>, instance_id: usize) -> Result<(), String> {
-    let socket_path: String = children
-        .get(instance_id)
-        .expect("Failed to get mpv instance")
-        .socket
-        .clone();
-
+pub fn wait_for_the_end(socket_path: &str) {
     eprintln!("Wait until 30 seconds before end of the video ...");
     loop {
         if let Some(playback_time) = get_playback_time(&socket_path) {
             if let Some(duration) = get_duration(&socket_path) {
                 let percent = playback_time * 100. / duration;
                 eprintln!(
-                    "instance{instance_id}: {playback_time:.0} / {duration:.0} ({percent:.0}%)"
+                    "instance{socket_path}: {playback_time:.0} / {duration:.0} ({percent:.0}%)"
                 );
 
                 if duration - playback_time <= 30.0 {
@@ -73,32 +72,13 @@ pub fn wait_for_the_end(children: &Vec<MpvInstance>, instance_id: usize) -> Resu
             break;
         }
 
-        thread::sleep(Duration::from_millis(1000));
+        thread::sleep(Duration::from_millis(500));
     }
-
-    Ok(())
 }
 
-pub fn start_video(
-    children: &Vec<MpvInstance>,
-    instance_id: usize,
-    path: &Path,
-    volume: u8,
-) -> Result<(), String> {
-    let socket_path: String = children
-        .get(instance_id)
-        .expect("Failed to get mpv instance")
-        .socket
-        .clone();
-
-    //let request_id = increment_counter(request_counter.clone());
-
-    let msg = json!({
-        "command": ["loadfile", path, "replace"],
-    });
-
-    eprintln!("Send to {socket_path}: {msg}");
-    let _result = send_msg(&socket_path, msg)?;
+pub fn start_video(socket_path: &str, path: &Path, volume: u8) -> Result<(), String> {
+    let msg = json!({ "command": ["loadfile", path, "replace"], });
+    send_msg(&socket_path, msg)?;
 
     set_volume(&socket_path, volume)?;
     //full_screen(&socket_path, instance_id + 1)?;
@@ -111,26 +91,7 @@ pub fn start_video(
         }
         thread::sleep(Duration::from_millis(100));
     }
-    eprintln!("Now leave atomic region");
-
-    Ok(())
-}
-
-fn _stop_video(children: &Vec<MpvInstance>, instance_id: usize) -> Result<(), String> {
-    let socket_path: String = children
-        .get(instance_id)
-        .expect("Failed to get mpv instance")
-        .socket
-        .clone();
-
-    //let request_id = increment_counter(request_counter.clone());
-
-    let msg = json!({
-        "command": ["stop"],
-    });
-
-    eprintln!("Send to {socket_path}: {msg}");
-    let _result = send_msg(&socket_path, msg)?;
+    eprintln!("Video is running and playback time can be retrieved");
 
     Ok(())
 }
@@ -144,13 +105,13 @@ pub fn send_msg(socket_path: &str, msg: serde_json::Value) -> Result<serde_json:
             .map_err(|e| format!("Failed to create buffer reader: {e}"))?,
     );
 
-    eprintln!("send to {}: {}", socket_path, msg.to_string());
+    //eprintln!("send to {}: {}", socket_path, msg.to_string());
     writeln!(stream, "{}", msg.to_string())
         .map_err(|e| format!("Cannot write to UNIX socket: {e}"))?;
 
     for line in reader.lines() {
         if let Ok(text) = line {
-            eprintln!("response from mpv: {text}");
+            //eprintln!("response from mpv: {text}");
             let result: Result<serde_json::Value, _> = serde_json::from_str(&text);
             if let Ok(parsed) = result {
                 if let Some(value) = parsed.get("error") {
