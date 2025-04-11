@@ -91,6 +91,7 @@ pub fn start_video(socket_path: &str, path: &Path, volume: u8) -> Result<f64, St
 
     // Wait until volume can be set successful
     eprintln!("Wait until volume is set successfully");
+    let mut counter = 0;
     loop {
         // First commands are to ensure that they are working
         if let Some(_) = get_playback_time(&socket_path) {
@@ -103,6 +104,11 @@ pub fn start_video(socket_path: &str, path: &Path, volume: u8) -> Result<f64, St
             }
         }
         thread::sleep(Duration::from_millis(100));
+        counter += 1;
+
+        if counter == 10 {
+            return Err(String::from("Cannot set volume after 10 tryies"));
+        }
     }
 }
 

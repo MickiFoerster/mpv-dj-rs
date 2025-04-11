@@ -3,9 +3,11 @@ use std::error::Error;
 use std::fs::{self, File};
 use std::io::{self};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use csv::Writer;
 use rand::seq::IteratorRandom;
+use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,7 +117,9 @@ fn collect_media_files(dir: &Path, category: &str, media_files: &mut Vec<MediaFi
     }
 }
 
-pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
+pub fn choose_media_file(
+    current_media_file: Option<MediaFile>,
+) -> Result<Option<MediaFile>, Box<dyn Error>> {
     let cat_file = File::open("categories.csv")?;
     let media_file = File::open("media-files.csv")?;
 
@@ -125,9 +129,13 @@ pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
     let categories: Vec<Category> = rdr_cat.deserialize().collect::<Result<_, _>>()?;
     let media_files: Vec<MediaFile> = rdr_media.deserialize().collect::<Result<_, _>>()?;
 
+    for f in &media_files {
+        eprintln!("file: {} played {}", f.path.display(), f.played);
+    }
+
     let last_choice_path = "last_choice.json";
 
-    let mut rng = rand::rng();
+    let mut rng = create_seeded_rng();
 
     let (category_to_use, times_chosen) = if Path::new(last_choice_path).exists() {
         let last_choice_data = fs::read_to_string(last_choice_path)?;
@@ -171,7 +179,12 @@ pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
     let candidates: Vec<MediaFile> = media_files
         .clone()
         .into_iter()
-        .filter(|f| f.category == category_to_use && f.played == 0)
+        .filter(|f| match &current_media_file {
+            Some(current_file) => {
+                f.category == category_to_use && f.played == 0 && f.path != current_file.path
+            }
+            None => f.category == category_to_use && f.played == 0,
+        })
         .collect();
 
     eprintln!("search for next song: {} candidates", candidates.len());
@@ -198,10 +211,7 @@ pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
     }
 
     // Now already played files ...
-    let candidates: Vec<MediaFile> = media_files
-        .into_iter()
-        .filter(|f| f.category == category_to_use)
-        .collect();
+    let candidates: Vec<MediaFile> = media_files.into_iter().collect();
     eprintln!(
         "search under already played songs: {} candidates",
         candidates.len()
@@ -284,4 +294,15 @@ pub fn update_play_info(
     wtr_media.flush()?;
 
     Ok(())
+}
+
+fn create_seeded_rng() -> StdRng {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards");
+
+    // Combine seconds and nanoseconds into one u64 seed
+    let seed = now.as_secs() ^ now.subsec_nanos() as u64;
+
+    StdRng::seed_from_u64(seed)
 }

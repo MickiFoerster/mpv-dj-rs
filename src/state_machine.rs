@@ -14,7 +14,7 @@ pub fn play() {
     let mut to = 1;
     let mut children: Vec<Child> = Vec::with_capacity(2);
 
-    let media_file_from = get_next_song();
+    let mut media_file_from = get_next_song(None);
 
     let mut socket_path_from = format!("/tmp/mpv{from}.socket");
     let mut socket_path_to: String;
@@ -49,21 +49,8 @@ pub fn play() {
     loop {
         wait_for_the_end(&socket_path_from);
 
-        // update here already that song was played once more. This must
-        // happen before next song is chosen.
-        match media_files::update_play_info(&media_file_from, 0, false) {
-            Ok(_) => eprintln!("CSV files updated successfully"),
-            Err(e) => eprintln!("Failed to update CSV files: {e}"),
-        };
-
         // Now time to start next video
-        let mut media_file_to: MediaFile;
-        loop {
-            media_file_to = get_next_song();
-            if media_file_to.path != media_file_from.path {
-                break;
-            }
-        }
+        let media_file_to = get_next_song(Some(media_file_from.clone()));
 
         socket_path_to = format!("/tmp/mpv{to}.socket");
         let _ = std::fs::remove_file(&socket_path_to);
@@ -91,6 +78,11 @@ pub fn play() {
 
         let duration_to =
             start_video(&socket_path_to, &media_file_to.path, 0).expect("Failed to start video");
+        eprintln!(
+            "Change from {} to {}.",
+            media_file_from.path.display(),
+            media_file_to.path.display()
+        );
 
         eprintln!("Begin fading out of {from} and in of {to} ...");
 
@@ -188,13 +180,12 @@ pub fn play() {
 
         socket_path_from = format!("/tmp/mpv{from}.socket");
         duration_from = duration_to;
+        media_file_from = media_file_to;
     }
 }
 
-fn get_next_song() -> MediaFile {
-    let media_file = crate::media_files::choose_media_file()
+fn get_next_song(current_media_file: Option<MediaFile>) -> MediaFile {
+    crate::media_files::choose_media_file(current_media_file)
         .expect("Failed to get a media file from CSV files.")
-        .expect("Failed to choose randomly a file from the list of available files.");
-
-    media_file
+        .expect("Failed to choose randomly a file from the list of available files.")
 }
