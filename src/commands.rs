@@ -26,6 +26,14 @@ pub fn quit(socket_path: &str) -> Result<(), String> {
 
     Ok(())
 }
+
+pub fn get_video_path(socket_path: &str) -> Option<String> {
+    let msg = json!({ "command": ["get_property", "path"] });
+    let response = send_msg(socket_path, msg).ok()?;
+
+    response.get("data").map(|v| v.to_string())
+}
+
 fn set_volume(socket_path: &str, volume: u8) -> Result<(), String> {
     let msg = json!({ "command": ["set_property", "volume", volume] });
     let _result = send_msg(&socket_path, msg)?;
@@ -57,9 +65,11 @@ pub fn wait_for_the_end(socket_path: &str) {
     loop {
         if let Some(playback_time) = get_playback_time(&socket_path) {
             if let Some(duration) = get_duration(&socket_path) {
+                let video_path =
+                    get_video_path(socket_path).expect("Failed to get path of current video");
                 let percent = playback_time * 100. / duration;
                 eprintln!(
-                    "instance{socket_path}: {playback_time:.0} / {duration:.0} ({percent:.0}%)"
+                    "instance{socket_path}: {video_path}: {playback_time:.0} / {duration:.0} ({percent:.0}%)"
                 );
 
                 if duration - playback_time <= 30.0 {

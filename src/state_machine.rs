@@ -1,20 +1,20 @@
 use std::process::{Child, Command};
 
-use std::{path::PathBuf, thread, time::Duration};
+use std::{thread, time::Duration};
 
 use serde_json::json;
 
-use crate::{
-    commands::{get_duration, get_playback_time, quit, send_msg, start_video, wait_for_the_end},
-    load_media_files::MediaFile,
+use crate::commands::{
+    get_duration, get_playback_time, quit, send_msg, start_video, wait_for_the_end,
 };
+use crate::media_files::{self, MediaFile};
 
-pub fn play(media_files: &Vec<MediaFile>) {
+pub fn play() {
     let mut from = 0;
     let mut to = 1;
     let mut children: Vec<Child> = Vec::with_capacity(2);
 
-    let path = get_next_song(&media_files);
+    let media_file_from = get_next_song();
 
     let mut socket_path_from = format!("/tmp/mpv{from}.socket");
     let mut socket_path_to: String;
@@ -42,13 +42,13 @@ pub fn play(media_files: &Vec<MediaFile>) {
         }
     }
 
-    start_video(&socket_path_from, &path, 100).expect("Failed to start video");
+    start_video(&socket_path_from, &media_file_from.path, 100).expect("Failed to start video");
 
     loop {
         wait_for_the_end(&socket_path_from);
 
         // Now time to start next video
-        let path = get_next_song(media_files);
+        let media_file_to = get_next_song();
 
         socket_path_to = format!("/tmp/mpv{to}.socket");
         let _ = std::fs::remove_file(&socket_path_to);
@@ -74,7 +74,7 @@ pub fn play(media_files: &Vec<MediaFile>) {
             }
         }
 
-        start_video(&socket_path_to, &path, 0).expect("Failed to start video");
+        start_video(&socket_path_to, &media_file_to.path, 0).expect("Failed to start video");
 
         eprintln!("Begin fading out of {from} and in of {to} ...");
 
@@ -104,8 +104,7 @@ pub fn play(media_files: &Vec<MediaFile>) {
 
                                 eprintln!("set volume of instance {to}: {volume}");
                                 let msg = json!({ "command": ["set_property", "volume", volume.trunc()] });
-                                send_msg(&socket_path_to, msg)
-                                    .expect("Failed to send volume command");
+                                let _ = send_msg(&socket_path_to, msg);
                             } else {
                                 break;
                             }
@@ -126,6 +125,18 @@ pub fn play(media_files: &Vec<MediaFile>) {
 
         let msg = json!({ "command": ["set_property", "volume", 100] });
         let _ = send_msg(&socket_path_to, msg);
+
+        if let Some(duration) = get_duration(&socket_path_from) {
+            // update CSV files
+            match media_files::update_play_info(
+                &media_file_from,
+                duration.round() as u64,
+                media_file_from.category != media_file_to.category,
+            ) {
+                Ok(_) => eprintln!("CSV files updated successfully"),
+                Err(e) => eprintln!("Failed to update CSV files: {e}"),
+            };
+        }
 
         loop {
             if let Some(playback_time) = get_playback_time(&socket_path_from) {
@@ -158,6 +169,10 @@ pub fn play(media_files: &Vec<MediaFile>) {
     }
 }
 
-fn get_next_song(media_files: &Vec<MediaFile>) -> PathBuf {
-    media_files.get(0).expect("non-empty vector").path.clone()
+fn get_next_song() -> MediaFile {
+    let media_file = crate::media_files::choose_media_file()
+        .expect("Failed to get a media file from CSV files.")
+        .expect("Failed to choose randomly a file from the list of available files.");
+
+    media_file
 }
