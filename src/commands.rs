@@ -65,8 +65,7 @@ pub fn wait_for_the_end(socket_path: &str) {
     loop {
         if let Some(playback_time) = get_playback_time(&socket_path) {
             if let Some(duration) = get_duration(&socket_path) {
-                let video_path =
-                    get_video_path(socket_path).expect("Failed to get path of current video");
+                let video_path = get_video_path(socket_path).unwrap_or(String::from("unknown"));
                 let percent = playback_time * 100. / duration;
                 eprintln!(
                     "instance{socket_path}: {video_path}: {playback_time:.0} / {duration:.0} ({percent:.0}%)"
@@ -86,24 +85,25 @@ pub fn wait_for_the_end(socket_path: &str) {
     }
 }
 
-pub fn start_video(socket_path: &str, path: &Path, volume: u8) -> Result<(), String> {
+pub fn start_video(socket_path: &str, path: &Path, volume: u8) -> Result<f64, String> {
     let msg = json!({ "command": ["loadfile", path, "replace"], });
     send_msg(&socket_path, msg)?;
 
-    set_volume(&socket_path, volume)?;
-    //full_screen(&socket_path, instance_id + 1)?;
-
-    // Wait until get_duration is successful
-    eprintln!("Wait until get_duration is successful");
+    // Wait until volume can be set successful
+    eprintln!("Wait until volume is set successfully");
     loop {
+        // First commands are to ensure that they are working
         if let Some(_) = get_playback_time(&socket_path) {
-            break;
+            if let Some(_) = get_video_path(&socket_path) {
+                if let Some(duration) = get_duration(&socket_path) {
+                    if set_volume(&socket_path, volume).is_ok() {
+                        return Ok(duration);
+                    }
+                }
+            }
         }
         thread::sleep(Duration::from_millis(100));
     }
-    eprintln!("Video is running and playback time can be retrieved");
-
-    Ok(())
 }
 
 pub fn send_msg(socket_path: &str, msg: serde_json::Value) -> Result<serde_json::Value, String> {

@@ -27,6 +27,7 @@ struct Category {
     duration_overall: u64,
     current_duration: u64,
     count: u32,
+    visible: bool,
 }
 
 pub fn load(music_dir: &Path) -> Vec<MediaFile> {
@@ -78,10 +79,16 @@ pub fn write_media_files_to_csv(
     let category_file = File::create(category_csv_path)?;
     let mut category_writer = Writer::from_writer(category_file);
 
-    category_writer.write_record(&["category", "duration_overall", "current_duration", "count"])?;
+    category_writer.write_record(&[
+        "category",
+        "duration_overall",
+        "current_duration",
+        "count",
+        "visible",
+    ])?;
 
     for (category, count) in category_counts.iter() {
-        category_writer.write_record(&[category, "0", "0", &count.to_string()])?;
+        category_writer.write_record(&[category, "0", "0", &count.to_string(), "true"])?;
     }
 
     category_writer.flush()?;
@@ -130,13 +137,17 @@ pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
             // pick a different category
             let other_categories: Vec<&Category> = categories
                 .iter()
-                .filter(|cat| cat.category != last_choice.media_file.category)
+                .filter(|cat| cat.visible && cat.category != last_choice.media_file.category)
                 .collect();
 
             if let Some(new_cat) = other_categories.into_iter().choose(&mut rng) {
                 (new_cat.category.clone(), 1)
             } else {
-                return Ok(None); // no other category available
+                eprintln!("no other category available, so take the last one anyway");
+                (
+                    last_choice.media_file.category,
+                    last_choice.times_chosen + 1,
+                )
             }
         } else {
             (
@@ -146,12 +157,15 @@ pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
         }
     } else {
         // first time use
-        if let Some(cat) = categories.iter().choose(&mut rng) {
+        if let Some(cat) = categories.iter().filter(|cat| cat.visible).choose(&mut rng) {
             (cat.category.clone(), 1)
         } else {
+            eprintln!("first time use: cannot choose randomly");
             return Ok(None);
         }
     };
+
+    eprintln!("search for next song: choose category {}", category_to_use);
 
     // Pick unplayed file from the chosen category
     let candidates: Vec<MediaFile> = media_files
@@ -159,6 +173,11 @@ pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
         .into_iter()
         .filter(|f| f.category == category_to_use && f.played == 0)
         .collect();
+
+    eprintln!("search for next song: {} candidates", candidates.len());
+    for f in &candidates {
+        eprintln!("candidates: {} played: {}", f.path.display(), f.played);
+    }
 
     if let Some(selected) = candidates.into_iter().choose(&mut rng) {
         // Save the new choice
@@ -169,6 +188,11 @@ pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
 
         let serialized = serde_json::to_string_pretty(&last_choice)?;
         fs::write(last_choice_path, serialized)?;
+
+        eprintln!(
+            "next song is one played not before: {}",
+            selected.path.display()
+        );
 
         return Ok(Some(selected));
     }
@@ -178,6 +202,10 @@ pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
         .into_iter()
         .filter(|f| f.category == category_to_use)
         .collect();
+    eprintln!(
+        "search under already played songs: {} candidates",
+        candidates.len()
+    );
 
     if let Some(selected) = candidates.into_iter().choose(&mut rng) {
         // Save the new choice
@@ -189,6 +217,10 @@ pub fn choose_media_file() -> Result<Option<MediaFile>, Box<dyn Error>> {
         let serialized = serde_json::to_string_pretty(&last_choice)?;
         fs::write(last_choice_path, serialized)?;
 
+        eprintln!(
+            "next song was played before since all were played already: {}",
+            selected.path.display()
+        );
         return Ok(Some(selected));
     }
 
@@ -223,7 +255,8 @@ pub fn update_play_info(
                 cat.current_duration += duration;
             }
             cat.duration_overall += duration;
-            eprintln!("debug: {}", cat.duration_overall);
+            eprintln!("update CSV: current_duration: {}", cat.current_duration);
+            eprintln!("update CSV: duration_overall: {}", cat.duration_overall);
             break;
         }
     }
@@ -231,7 +264,7 @@ pub fn update_play_info(
     for media in media_files.iter_mut() {
         if media.category == *category_name && media.path == *file_path {
             media.played += 1;
-            eprintln!("debug: {}", media.played);
+            eprintln!("update CSV: played: {}", media.played);
             break;
         }
     }

@@ -42,13 +42,28 @@ pub fn play() {
         }
     }
 
-    start_video(&socket_path_from, &media_file_from.path, 100).expect("Failed to start video");
+    let mut duration_from =
+        start_video(&socket_path_from, &media_file_from.path, 100).expect("Failed to start video");
+    eprintln!("duration_from: {}", duration_from);
 
     loop {
         wait_for_the_end(&socket_path_from);
 
+        // update here already that song was played once more. This must
+        // happen before next song is chosen.
+        match media_files::update_play_info(&media_file_from, 0, false) {
+            Ok(_) => eprintln!("CSV files updated successfully"),
+            Err(e) => eprintln!("Failed to update CSV files: {e}"),
+        };
+
         // Now time to start next video
-        let media_file_to = get_next_song();
+        let mut media_file_to: MediaFile;
+        loop {
+            media_file_to = get_next_song();
+            if media_file_to.path != media_file_from.path {
+                break;
+            }
+        }
 
         socket_path_to = format!("/tmp/mpv{to}.socket");
         let _ = std::fs::remove_file(&socket_path_to);
@@ -74,12 +89,14 @@ pub fn play() {
             }
         }
 
-        start_video(&socket_path_to, &media_file_to.path, 0).expect("Failed to start video");
+        let duration_to =
+            start_video(&socket_path_to, &media_file_to.path, 0).expect("Failed to start video");
 
         eprintln!("Begin fading out of {from} and in of {to} ...");
 
         if let Some(playback_time) = get_playback_time(&socket_path_from) {
             if let Some(duration) = get_duration(&socket_path_from) {
+                assert!(duration == duration_from);
                 let time_difference = duration - playback_time;
 
                 loop {
@@ -126,17 +143,21 @@ pub fn play() {
         let msg = json!({ "command": ["set_property", "volume", 100] });
         let _ = send_msg(&socket_path_to, msg);
 
-        if let Some(duration) = get_duration(&socket_path_from) {
-            // update CSV files
-            match media_files::update_play_info(
-                &media_file_from,
-                duration.round() as u64,
-                media_file_from.category != media_file_to.category,
-            ) {
-                Ok(_) => eprintln!("CSV files updated successfully"),
-                Err(e) => eprintln!("Failed to update CSV files: {e}"),
-            };
-        }
+        // update CSV files
+        eprintln!(
+            "CATEGORY change from {} to {}: {}",
+            media_file_from.category,
+            media_file_to.category,
+            media_file_from.category != media_file_to.category
+        );
+        match media_files::update_play_info(
+            &media_file_from,
+            duration_from.round() as u64,
+            media_file_from.category != media_file_to.category,
+        ) {
+            Ok(_) => eprintln!("CSV files updated successfully"),
+            Err(e) => eprintln!("Failed to update CSV files: {e}"),
+        };
 
         loop {
             if let Some(playback_time) = get_playback_time(&socket_path_from) {
@@ -166,6 +187,7 @@ pub fn play() {
         to = tmp;
 
         socket_path_from = format!("/tmp/mpv{from}.socket");
+        duration_from = duration_to;
     }
 }
 
