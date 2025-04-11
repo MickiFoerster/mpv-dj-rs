@@ -129,10 +129,6 @@ pub fn choose_media_file(
     let categories: Vec<Category> = rdr_cat.deserialize().collect::<Result<_, _>>()?;
     let media_files: Vec<MediaFile> = rdr_media.deserialize().collect::<Result<_, _>>()?;
 
-    for f in &media_files {
-        eprintln!("file: {} played {}", f.path.display(), f.played);
-    }
-
     let last_choice_path = "last_choice.json";
 
     let mut rng = create_seeded_rng();
@@ -188,9 +184,6 @@ pub fn choose_media_file(
         .collect();
 
     eprintln!("search for next song: {} candidates", candidates.len());
-    for f in &candidates {
-        eprintln!("candidates: {} played: {}", f.path.display(), f.played);
-    }
 
     if let Some(selected) = candidates.into_iter().choose(&mut rng) {
         // Save the new choice
