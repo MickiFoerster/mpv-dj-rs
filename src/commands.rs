@@ -103,12 +103,13 @@ pub fn start_video(socket_path: &str, path: &Path, volume: u8) -> Result<f64, St
                 }
             }
         }
-        thread::sleep(Duration::from_millis(100));
-        counter += 1;
+        thread::sleep(Duration::from_millis(200));
 
-        if counter == 10 {
-            return Err(String::from("Cannot set volume after 10 tryies"));
+        if counter == 100 {
+            return Err(format!("Cannot set volume after {counter} tryies"));
         }
+
+        counter += 1;
     }
 }
 

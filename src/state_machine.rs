@@ -151,12 +151,19 @@ pub fn play() {
             Err(e) => eprintln!("Failed to update CSV files: {e}"),
         };
 
+        let mut counter = 1;
         loop {
             if let Some(playback_time) = get_playback_time(&socket_path_from) {
                 if let Some(duration) = get_duration(&socket_path_from) {
                     if playback_time < duration {
                         eprintln!("Wait for old video to finish ...");
                         thread::sleep(Duration::from_millis(500));
+
+                        if counter == 20 {
+                            break;
+                        }
+
+                        counter += 1;
                     } else {
                         break;
                     }
